@@ -6,3 +6,5 @@ engine/.venv-motion/
 engine/config.json
 __pycache__/
 *.log
+engine/third_party/
+samples/augusta_exports/

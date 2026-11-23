@@ -33,8 +33,15 @@ cd engine
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 ```
-Blender is found via `AUTOBONES_BLENDER`, `engine/config.json` (`{"blender": "D:/App/Blender/blender.exe"}`),
-`D:\App\Blender\blender.exe`, or PATH. Blender 5.x removed Collada: `.dae` is read directly by the viewer only.
+## Setting the Blender path (other machine / other install location)
+`engine/autobones/blender.py` looks for Blender in this order, first hit wins:
+1. environment variable `AUTOBONES_BLENDER` (full path to `blender.exe`)
+2. `engine/config.json` -> `{"blender": "D:/path/to/blender.exe"}`  (git-ignored; copy `engine/config.example.json`)
+3. standard installs (`Program Files\Blender Foundation\*`, macOS/Linux defaults)
+4. `blender` on PATH
+
+Easiest: run `run.bat`; if Blender is not found it asks for the path and writes `engine/config.json` for you.
+Blender 5.x has no Collada: `.dae` is read directly by the viewer only.
 
 ## Tests
 ```
@@ -45,10 +52,19 @@ E2E:    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222 npm r
         node tests/e2e.tauri.mjs                           (drives the real desktop app)
 ```
 
-## Text-to-motion (optional): NVIDIA Kimodo
-`engine/setup_motion.ps1` installs it. Kimodo's text encoder is the gated `meta-llama/Meta-Llama-3-8B-Instruct`:
-you need Hugging Face access approved by Meta + `hf auth login`. Check the NVIDIA Open Model License and the Llama 3
-Community License before commercial use. Without it, "Nhập chuyển động từ file BVH" still works.
+## Text-to-motion (prompt -> animation)
+Default backend: **MoMask** (public weights on Hugging Face, no account/token). Setup once: `engine/setup_momask.ps1`
+(PyTorch CUDA + OpenAI CLIP + a clone of github.com/ZeyuLing/Motius into `engine/third_party/`; weights ~550 MB download
+on first use). Output is HumanML3D (20 fps, 22 joints), converted to joint positions and retargeted by direction
+matching onto the model's rig (AutoBones-made or the model's own original rig). 2.0-9.8 s per clip, English prompts.
+~30 s per clip on an RTX 3060.
+
+**License caveat:** the Motius repo declares no license and the MoMask weights are `license: other` (HumanML3D/AMASS
+research terms). Treat generated motion as research/personal use until you have checked them for your use case.
+
+Alternative backend: NVIDIA Kimodo (`engine/setup_motion.ps1`) needs gated Meta Llama-3 access + `hf auth login`, but is
+trained on commercially-friendly mocap (check NVIDIA Open Model License + Llama 3 license). `--backend kimodo`.
+Always available: "Nhap chuyen dong tu file BVH" (Mixamo, mocap, other models).
 
 ## Lessons from a real game character (87k tris, 576 bones, hair/skirt rig, FBX)
 - FBX materials can import with alpha/opacity 0 (mesh invisible). Sanitized in Blender scripts and in the viewer.
