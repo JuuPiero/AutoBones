@@ -112,7 +112,7 @@ if heat_failed:
     from mathutils import kdtree
 
     height = float(co[:, 2].max() - co[:, 2].min())
-    voxel = max(height / 130.0, 0.003)
+    voxel = max(height / (320.0 if skel.get('meta', {}).get('fingers') else 130.0), 0.003)
     bpy.ops.object.select_all(action="DESELECT")
     proxy = body.copy()
     proxy.data = body.data.copy()
@@ -218,6 +218,31 @@ if n_bad:
             weights[vi, b2] = 1.0 - wa
             if da + db < 1e-9:
                 weights[vi, a], weights[vi, b2] = 1.0, 0.0
+
+# Bones the solver could not handle (small hands/fingers, thin parts) end up with NO weight at all. Give them the
+# vertices that are closest to them (soft blend of the 2 nearest bones) so every bone actually moves some skin.
+dead_final = [i for i in range(len(bone_names)) if weights[:, i].sum() < 1e-3]
+if dead_final:
+    heads2 = np.array([tuple(g2b(b["head"])) for b in skel["bones"]])
+    tails2 = np.array([tuple(g2b(b["tail"])) for b in skel["bones"]])
+    seg2 = tails2 - heads2
+    len2 = np.maximum((seg2 ** 2).sum(axis=1), 1e-12)
+    dead_set = set(dead_final)
+    patched = 0
+    for chunk in np.array_split(np.arange(nv), max(1, nv // 4096 + 1)):
+        p_ = co[chunk][:, None, :]
+        t_ = np.clip(((p_ - heads2[None]) * seg2[None]).sum(axis=2) / len2[None], 0, 1)
+        d_ = np.linalg.norm(p_ - (heads2[None] + t_[..., None] * seg2[None]), axis=2)
+        order_ = np.argsort(d_, axis=1)[:, :2]
+        for row, vi in enumerate(chunk):
+            a_, b_ = order_[row]
+            if a_ in dead_set:
+                da, db = d_[row, a_], d_[row, b_]
+                wa = db / (da + db + 1e-9)
+                weights[vi] = 0
+                weights[vi, a_], weights[vi, b_] = wa, 1.0 - wa
+                patched += 1
+    print("DEAD_BONES_PATCHED", patched, [bone_names[i] for i in dead_final][:12])
 
 # Keep at most 4 influences per vertex (glTF / game engine limit), then normalize.
 top4 = np.argsort(-weights, axis=1)[:, 4:]

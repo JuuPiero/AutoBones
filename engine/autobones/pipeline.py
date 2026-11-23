@@ -42,7 +42,7 @@ def has_skin(glb: Path) -> bool:
 
 
 def analyze(
-    src: Path, kind: str, progress: Progress, tmp: Path | None = None, replace_skeleton: bool = False
+    src: Path, kind: str, progress: Progress, tmp: Path | None = None, replace_skeleton: bool = False, fingers: bool = False
 ) -> tuple[Skeleton, Path]:
     tmp = tmp or Path(tempfile.mkdtemp(prefix="autobones_"))
     glb = to_glb(src, tmp, progress)
@@ -56,23 +56,27 @@ def analyze(
         glb = stripped
     pts, _ = load_points(glb)
     if kind == "humanoid":
-        sk = detect_humanoid(pts)
+        sk = detect_humanoid(pts, fingers)
     else:
         raise ValueError(f"Loại rig '{kind}' chưa hỗ trợ")
     return sk, glb
 
 
-def rig(src: Path, dst: Path, kind: str, progress: Progress, replace_skeleton: bool = False) -> dict:
+def rig(src: Path, dst: Path, kind: str, progress: Progress, replace_skeleton: bool = False, fingers: bool = False) -> dict:
     tmp = Path(tempfile.mkdtemp(prefix="autobones_"))
-    sk, glb = analyze(src, kind, progress, tmp, replace_skeleton)
+    sk, glb = analyze(src, kind, progress, tmp, replace_skeleton, fingers)
     progress(0.5, f"Đã đặt {len(sk.bones)} xương, đang tính skin weight")
     skel_json = tmp / "skeleton.json"
     skel_json.write_text(sk.to_json(), encoding="utf-8")
-    out = blender.run_script("rig_apply.py", str(glb), str(skel_json), str(dst))
+    raw = tmp / "rigged_raw.glb" if fingers else dst
+    out = blender.run_script("rig_apply.py", str(glb), str(skel_json), str(raw))
     stats = {}
     for line in out.splitlines():
         if line.startswith("RIG_OK"):
             stats = json.loads(line[len("RIG_OK"):])
+    if fingers:  # thin fingers get ragged weights near the knuckles; smoothing makes poses (fist, point) clean
+        progress(0.9, "Làm mượt weight vùng bàn tay")
+        blender.run_script("smooth_weights.py", str(raw), str(dst), "8")
     progress(1.0, "Xong")
     return {"output": str(dst), "skeleton": json.loads(sk.to_json()), "stats": stats}
 

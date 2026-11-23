@@ -26,6 +26,7 @@ def main(argv=None) -> int:
     r.add_argument("input")
     r.add_argument("output")
     r.add_argument("--kind", default="humanoid")
+    r.add_argument("--fingers", action="store_true", help="add Mixamo-style finger bones (5 x 3 per hand)")
     r.add_argument("--replace-skeleton", action="store_true", help="drop the model's existing skeleton first")
     rs = sub.add_parser("reskin")
     rs.add_argument("input")
@@ -49,11 +50,15 @@ def main(argv=None) -> int:
     mo.add_argument("--prompt", required=True)
     mo.add_argument("--seconds", type=float, default=4.0)
     mo.add_argument("--backend", default="auto", choices=["auto", "momask", "kimodo"])
+    mo.add_argument("--in-place", action="store_true", help="remove horizontal root travel (walk/run stay on the spot)")
+    mo.add_argument("--loop", action="store_true", help="make the clip loop seamlessly (implies --in-place)")
     bv = sub.add_parser("motion-bvh")  # existing BVH file -> animation
     bv.add_argument("rigged")
     bv.add_argument("bvh")
     bv.add_argument("output")
     bv.add_argument("--skeleton", required=True)
+    bv.add_argument("--in-place", action="store_true")
+    bv.add_argument("--loop", action="store_true")
     c = sub.add_parser("convert")
     c.add_argument("input")
     c.add_argument("output")
@@ -62,7 +67,7 @@ def main(argv=None) -> int:
 
     try:
         if a.cmd == "rig":
-            res = pipeline.rig(Path(a.input), Path(a.output), a.kind, progress, a.replace_skeleton)
+            res = pipeline.rig(Path(a.input), Path(a.output), a.kind, progress, a.replace_skeleton, a.fingers)
         elif a.cmd == "reskin":
             res = pipeline.reskin(Path(a.input), Path(a.skeleton), Path(a.output), progress)
         elif a.cmd == "smooth":
@@ -72,9 +77,9 @@ def main(argv=None) -> int:
         elif a.cmd == "edit-rig":
             res = pipeline.edit_rig(Path(a.input), Path(a.edits), Path(a.output), progress)
         elif a.cmd == "motion":
-            res = motion.from_prompt(Path(a.rigged), Path(a.skeleton), Path(a.output), a.prompt, a.seconds, progress, a.backend)
+            res = motion.from_prompt(Path(a.rigged), Path(a.skeleton), Path(a.output), a.prompt, a.seconds, progress, a.backend, a.in_place, a.loop)
         elif a.cmd == "motion-bvh":
-            res = motion.apply_bvh(Path(a.rigged), Path(a.skeleton), Path(a.bvh), Path(a.output), progress)
+            res = motion.apply_bvh(Path(a.rigged), Path(a.skeleton), Path(a.bvh), Path(a.output), progress, a.in_place, a.loop)
         elif a.cmd == "convert":
             res = pipeline.convert(Path(a.input), Path(a.output), progress)
         else:

@@ -67,7 +67,10 @@ def generate_features_momask(prompt: str, seconds: float, workdir: Path, progres
         raise MotionBackendUnavailable("Chưa cài mô hình MoMask. Chạy engine/setup_momask.ps1.")
     out = workdir / "momask_features.npy"
     progress(0.15, "MoMask đang tạo chuyển động (lần đầu sẽ tự tải ~550MB)")
-    r = _run([str(MOTION_VENV_PY), str(MOMASK_RUNNER), prompt, str(momask_frames(seconds)), str(out), str(seed)])
+    # Weights already in the Hugging Face cache -> never touch the network (works fully offline).
+    cache = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub" / "models--ZeyuLing--Motius-MoMask-HumanML3D"
+    env = {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"} if (cache / "snapshots").is_dir() else {}
+    r = _run([str(MOTION_VENV_PY), str(MOMASK_RUNNER), prompt, str(momask_frames(seconds)), str(out), str(seed)], env=env)
     if r.returncode != 0 or not out.is_file():
         tail = ((r.stderr or "") + (r.stdout or ""))[-700:]
         raise RuntimeError(f"MoMask lỗi: {tail}")
@@ -108,7 +111,7 @@ def generate_bvh_kimodo(prompt: str, seconds: float, workdir: Path, progress: Pr
 
 
 # ---------------------------------------------------------------- shared: retarget + bake
-def _bake(rigged: Path, skeleton_json: Path, source, dst: Path, progress: Progress) -> dict:
+def _bake(rigged: Path, skeleton_json: Path, source, dst: Path, progress: Progress, in_place: bool = False, loop: bool = False) -> dict:
     sk = Skeleton.from_json(skeleton_json.read_text(encoding="utf-8"))
     bone_map = None
     if sk.kind == "foreign":  # model's own rig: retarget onto its standard-named view, then map back by name
@@ -117,7 +120,7 @@ def _bake(rigged: Path, skeleton_json: Path, source, dst: Path, progress: Progre
         bone_map = sk.meta["bone_map"]
         sk = rigmap.standard_view(sk)
     progress(0.55, "Ghép chuyển động vào xương của model")
-    motion = retarget(source, sk)
+    motion = retarget(source, sk, in_place=in_place, loop=loop)
     if bone_map:
         motion["bone_map"] = bone_map
     tmp = Path(tempfile.mkdtemp(prefix="autobones_motion_"))
@@ -129,9 +132,11 @@ def _bake(rigged: Path, skeleton_json: Path, source, dst: Path, progress: Progre
     return {"output": str(dst), "frames": motion["frames"], "fps": motion["fps"]}
 
 
-def apply_bvh(rigged: Path, skeleton_json: Path, bvh_path: Path, dst: Path, progress: Progress) -> dict:
+def apply_bvh(
+    rigged: Path, skeleton_json: Path, bvh_path: Path, dst: Path, progress: Progress, in_place: bool = False, loop: bool = False
+) -> dict:
     progress(0.5, "Đọc file BVH")
-    return _bake(rigged, skeleton_json, parse_bvh(bvh_path), dst, progress)
+    return _bake(rigged, skeleton_json, parse_bvh(bvh_path), dst, progress, in_place, loop)
 
 
 def pick_backend(requested: str = "auto") -> str:
@@ -143,7 +148,9 @@ def pick_backend(requested: str = "auto") -> str:
 
 
 def from_prompt(
-    rigged: Path, skeleton_json: Path, dst: Path, prompt: str, seconds: float, progress: Progress, backend: str = "auto"
+    rigged: Path, skeleton_json: Path, dst: Path, prompt: str, seconds: float, progress: Progress, backend: str = "auto",
+    in_place: bool = False,
+    loop: bool = False,
 ) -> dict:
     tmp = Path(tempfile.mkdtemp(prefix="autobones_motion_"))
     which = pick_backend(backend)
@@ -152,6 +159,6 @@ def from_prompt(
         source = positions_from_features(feats)
     else:
         source = parse_bvh(generate_bvh_kimodo(prompt, seconds, tmp, progress))
-    res = _bake(rigged, skeleton_json, source, dst, progress)
+    res = _bake(rigged, skeleton_json, source, dst, progress, in_place, loop)
     res["backend"] = which
     return res

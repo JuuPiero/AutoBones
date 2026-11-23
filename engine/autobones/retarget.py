@@ -143,7 +143,30 @@ def _basis(up: np.ndarray, lat: np.ndarray) -> np.ndarray:
     return np.stack([lat, up, fwd], axis=1)  # columns: x(left), y(up), z(forward)
 
 
-def retarget(bvh: Bvh, target: Skeleton, max_fps: float = 30.0) -> dict:
+def _make_loop(Dt: dict, min_frac: float = 0.5, blend: int = 10) -> dict:
+    """Cut the clip where its pose best matches frame 0, drop that duplicate frame, then ease the last few frames toward
+    frame 0 so the last -> first step is as smooth as any other step."""
+    names = sorted(Dt)
+    T = Dt["Hips"].shape[0]
+    if T < 16:
+        return Dt
+    feat = np.concatenate([Dt[n] - Dt["Hips"] * np.array([1, 0, 1]) for n in names], axis=1)  # pose without horizontal root
+    vel = np.gradient(feat, axis=0)
+    feat = np.concatenate([feat, 3.0 * vel], axis=1)  # match motion direction too, not only the pose
+    lo = int(T * min_frac)
+    j = lo + int(np.argmin(np.linalg.norm(feat[lo:] - feat[0], axis=1)))
+    out = {n: v[:j].copy() for n, v in Dt.items()}  # frame j ~ frame 0 is dropped: ... j-1 -> 0 is the loop seam
+    k = min(blend, j // 3)
+    for i in range(k):
+        w = (i + 1) / (k + 1)
+        w = w * w * (3 - 2 * w)  # smoothstep
+        idx = j - k + i
+        for n in out:
+            out[n][idx] = out[n][idx] * (1 - w) + Dt[n][0] * w
+    return out
+
+
+def retarget(bvh: Bvh, target: Skeleton, max_fps: float = 30.0, in_place: bool = False, loop: bool = False) -> dict:
     """Returns a JSON-serializable motion description for blender/apply_motion.py."""
     m = map_source_joints(bvh)
     spines: list[int] = m.pop("_spines")  # type: ignore[assignment]
@@ -207,6 +230,18 @@ def retarget(bvh: Bvh, target: Skeleton, max_fps: float = 30.0) -> dict:
         return th["Hips"] + scale * ((x - src_hips_rest) @ M.T)
 
     Dt = {n: conv(v) for n, v in D.items()}
+    in_place = in_place or loop  # a seamless loop cannot also travel
+    if in_place:
+        # Walk/run stay on the spot (what game engines expect). Only horizontal travel of the root is removed:
+        # height bounce and every limb direction are untouched.
+        offset = Dt["Hips"][:, [0, 2]] - Dt["Hips"][0, [0, 2]]
+        for n in Dt:
+            Dt[n] = Dt[n].copy()
+            Dt[n][:, [0, 2]] -= offset
+
+    if loop:
+        Dt = _make_loop(Dt)
+        T = Dt["Hips"].shape[0]
 
     dirs: dict[str, list] = {}
     aim_child: dict[str, str] = {}

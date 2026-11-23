@@ -18,7 +18,75 @@ def _slice(P: np.ndarray, y: float, half: float) -> np.ndarray:
     return P[np.abs(P[:, 1] - y) < half]
 
 
-def detect_humanoid(P: np.ndarray) -> Skeleton:
+FINGERS = ("Thumb", "Index", "Middle", "Ring", "Pinky")
+
+
+def _add_fingers(sk: Skeleton, P: np.ndarray, S: str, side: int, wr: np.ndarray, tip: np.ndarray, forward: float) -> None:
+    """Mixamo-style fingers (5 x 3 bones) laid out on the hand's own geometry: palm axis, width and thumb side."""
+    axis = tip - wr
+    L = float(np.linalg.norm(axis))
+    if L < 1e-6:
+        return
+    a = axis / L
+    rel = P - wr
+    t = rel @ a
+    radial = rel - np.outer(t, a)
+    near = (t > -0.1 * L) & (t < 1.15 * L) & (np.linalg.norm(radial, axis=1) < 0.7 * L) & (P[:, 0] * side > 0)
+    pts = radial[near]
+    if len(pts) < 30:
+        return
+    # width axis = main direction of the hand cross-section (hand is wide and flat); thumb side faces the character front
+    _, _, vt = np.linalg.svd(pts - pts.mean(axis=0), full_matrices=False)
+    u = vt[0] - a * (vt[0] @ a)
+    u /= np.linalg.norm(u)
+    if u[2] * forward < 0:
+        u = -u
+    coords = pts @ u
+    lo, hi = np.percentile(coords, [3, 97])
+    W = float(hi - lo)
+    cu = (lo + hi) / 2
+    centre = wr + pts.mean(axis=0) * 0.0 + (pts.mean(axis=0) - (pts.mean(axis=0) @ u) * u)  # palm centre line (width removed)
+    spec = {  # finger: (offset across width as fraction of W, start along hand, length, segment ratios)
+        "Pinky": (-0.30, 0.38, 0.45), "Ring": (-0.10, 0.38, 0.55), "Middle": (0.10, 0.38, 0.62), "Index": (0.30, 0.38, 0.55),
+    }
+    seg = (0.42, 0.30, 0.28)
+    for name, (off, start, ln) in spec.items():
+        base = centre + u * (cu + off * W) + a * (start * L)
+        prev = f"{S}Hand"
+        pos = base.copy()
+        for i, f in enumerate(seg, 1):
+            nxt = pos + a * (ln * L * f)
+            bn = f"{S}Hand{name}{i}"
+            sk.add(bn, prev, pos, nxt, f"{S.lower()}_{name.lower()}{i}")
+            prev, pos = bn, nxt
+    # Thumb: lies next to the index finger, raised towards the palm side (mirror-symmetric between hands), nearly parallel
+    # to it. Positions are expressed in the hand frame (a = along the hand, u = pinky->index, v = a x u) and scaled by the
+    # finger span S; fractions come from measuring a real character's thumb against its fingers.
+    idx_h = np.array(sk.by_name()[f"{S}HandIndex1"].head)
+    pin_h = np.array(sk.by_name()[f"{S}HandPinky1"].head)
+    uf = idx_h - pin_h
+    uf -= a * (uf @ a)
+    Sp = float(np.linalg.norm(uf))
+    if Sp < 1e-6:
+        return
+    uf /= Sp
+    vf = np.cross(a, uf)
+    idx_rel = idx_h - wr
+    idx_u, idx_v = float(idx_rel @ uf), float(idx_rel @ vf)
+    sgn = 1.0 if side > 0 else -1.0  # a x u points to the palm side for the character's left hand, away for the right
+    joints = []
+    for along, du, dv in ((0.12, -0.75, 0.10), (0.34, 0.10, 0.30), (0.47, 0.33, 0.35)):
+        joints.append(wr + a * (along * L) + uf * (idx_u + du * Sp) + vf * (idx_v + sgn * dv * Sp))
+    tip_t = joints[2] + (joints[2] - joints[1]) * 0.75
+    chain = [joints[0], joints[1], joints[2], tip_t]
+    prev = f"{S}Hand"
+    for i in range(3):
+        bn = f"{S}HandThumb{i + 1}"
+        sk.add(bn, prev, chain[i], chain[i + 1], f"{S.lower()}_thumb{i + 1}")
+        prev = bn
+
+
+def detect_humanoid(P: np.ndarray, fingers: bool = False) -> Skeleton:
     """P: (N,3) surface samples, Y-up. Returns a Skeleton in the same space."""
     ymin, ymax = float(P[:, 1].min()), float(P[:, 1].max())
     H = ymax - ymin
@@ -180,6 +248,9 @@ def detect_humanoid(P: np.ndarray) -> Skeleton:
         sk.add(f"{S}Arm", f"{S}Shoulder", sh, el, f"{S.lower()}_arm")
         sk.add(f"{S}ForeArm", f"{S}Arm", el, wr, f"{S.lower()}_forearm")
         sk.add(f"{S}Hand", f"{S}ForeArm", wr, tip_xyz, f"{S.lower()}_hand")
+        if fingers:
+            _add_fingers(sk, P, S, side, wr, tip_xyz, forward)
 
+    sk.meta["fingers"] = bool(fingers)
     sk.validate()
     return sk
