@@ -9,7 +9,11 @@ NOTE: obj/stl/ply carry no skeleton - armature is dropped on those exports (expe
 """
 import os
 import sys
+
 import bpy
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _common  # noqa: E402
 
 
 def die(msg):
@@ -74,6 +78,7 @@ if not os.path.isfile(src):
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 import_file(src)
+_common.sanitize_materials()
 export_file(dst)
 
 objs = list(bpy.context.scene.objects)

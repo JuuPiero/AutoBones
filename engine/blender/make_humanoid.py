@@ -56,8 +56,8 @@ cyl((0, 0, 1.50), (0, 0, 1.62), 0.055, 0.05, "neck")
 ell((0, 0, 1.72), (0.095, 0.105, 0.115), "head")
 # legs and feet (feet point toward -Y)
 for s, n in ((1, "L"), (-1, "R")):
-    x = 0.09 * s
-    cyl((x, 0, 1.12), (x, 0, 0.58), 0.085, 0.06, f"thigh_{n}")
+    x = 0.115 * s
+    cyl((x, 0, 1.12), (x, 0, 0.58), 0.08, 0.06, f"thigh_{n}")
     cyl((x, 0, 0.58), (x, 0, 0.09), 0.058, 0.04, f"shin_{n}")
     bpy.ops.mesh.primitive_cube_add(size=1, location=(x, -0.06, 0.04))
     o = bpy.context.active_object

@@ -1,0 +1,13 @@
+import { Viewer } from "../src/viewer/Viewer";
+import { mirrorBone } from "../src/viewer/poses";
+let failed = 0; const check = (n: string, ok: boolean) => { console.log(`${ok ? "PASS" : "FAIL"}  ${n}`); if (!ok) failed++; };
+check("space -> underscore (matches three.js)", Viewer.sanitizeName("Right arm") === "Right_arm");
+check("strips reserved chars", Viewer.sanitizeName("a.b:c[d]/e") === "abcde");
+const has = (s: string[]) => (n: string) => s.includes(n);
+check("Left_arm <-> Right_arm", mirrorBone("Left_arm", has(["Right_arm"])) === "Right_arm");
+check("Thumb1_L -> Thumb1_R", mirrorBone("Thumb1_L", has(["Thumb1_R"])) === "Thumb1_R");
+check("L_ChestBone01 -> R_ChestBone01", mirrorBone("L_ChestBone01", has(["R_ChestBone01"])) === "R_ChestBone01");
+check("LeftUpLeg -> RightUpLeg", mirrorBone("LeftUpLeg", has(["RightUpLeg"])) === "RightUpLeg");
+check("center bone has no mirror", mirrorBone("Spine", has(["Spine"])) === null);
+check("no counterpart in rig -> null", mirrorBone("Left_arm", has([])) === null);
+if (failed) process.exit(1); console.log("all passed");
