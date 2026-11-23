@@ -43,6 +43,12 @@ python -m venv .venv
 Easiest: run `run.bat`; if Blender is not found it asks for the path and writes `engine/config.json` for you.
 Blender 5.x has no Collada: `.dae` is read directly by the viewer only.
 
+## Export for Unity / Unreal
+Export dropdown: "FBX cho Unity" / "FBX cho Unreal" (CLI: `python -m autobones convert in.glb out.fbx --preset unity|unreal`).
+Both bake one take with the animation's own length, no leaf bones, one armature + meshes. These presets are NOT verified inside
+the engines themselves; they are checked by re-importing into Blender (bone count, clip length). Unity Humanoid auto-mapping
+works best with the 22/52-bone Mixamo-style rig; a model's own 576-bone rig usually needs Generic or manual mapping.
+
 ## Tests
 ```
 app:    npx tsx tests/ik.test.ts | rig.test.ts | stress.test.ts | skeletonEdit.test.ts | motion.test.ts | bonefilter.test.ts | sanitize.test.ts

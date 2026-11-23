@@ -26,7 +26,9 @@ export interface RigResult {
 export const MODEL_EXTENSIONS = ["glb", "gltf", "fbx", "obj", "stl", "ply", "dae", "blend", "usd", "usda", "usdc", "usdz", "abc"];
 export const EXPORT_FORMATS = [
   { ext: "glb", label: "GLB (web, Unity, Godot, Blender)" },
-  { ext: "fbx", label: "FBX (Unity, Unreal, Maya)" },
+  { ext: "fbx", label: "FBX (Maya, chung)" },
+  { ext: "fbx:unity", label: "FBX cho Unity" },
+  { ext: "fbx:unreal", label: "FBX cho Unreal" },
   { ext: "usdc", label: "USD (Omniverse, Apple)" },
   { ext: "obj", label: "OBJ (chỉ mesh, không xương)" },
   { ext: "stl", label: "STL (chỉ mesh, in 3D)" },
@@ -103,6 +105,7 @@ export const engine = {
     ]),
   motionBvh: (rigged: string, skeletonJson: string, bvh: string, output: string, inPlace = false, loop = false) =>
     runEngine<{ output: string }>(["motion-bvh", rigged, bvh, output, "--skeleton", skeletonJson, ...(inPlace ? ["--in-place"] : []), ...(loop ? ["--loop"] : [])]),
-  convert: (input: string, output: string) => runEngine<{ output: string }>(["convert", input, output]),
+  convert: (input: string, output: string, preset = "default") =>
+    runEngine<{ output: string }>(["convert", input, output, ...(preset !== "default" ? ["--preset", preset] : [])]),
   check: () => runEngine<{ blender: string }>(["check"]),
 };

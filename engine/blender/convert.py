@@ -47,14 +47,35 @@ def import_file(path):
         die(f"unsupported input format .{ext}")
 
 
-def export_file(path):
+# FBX settings per target engine. Both engines read the axis/unit info stored in the file, so these mainly decide the
+# FBX axes, unit scaling and bone axes the artist expects; no leaf bones and one baked take in every case.
+FBX_PRESETS = {
+    "default": dict(add_leaf_bones=False, bake_anim=True, path_mode="COPY", embed_textures=True),
+    "unity": dict(
+        axis_forward="-Z", axis_up="Y", apply_scale_options="FBX_SCALE_UNITS", global_scale=1.0,
+        add_leaf_bones=False, primary_bone_axis="Y", secondary_bone_axis="X",
+        bake_anim=True, bake_anim_use_all_actions=False, bake_anim_use_nla_strips=False,
+        bake_anim_force_startend_keying=True, bake_anim_simplify_factor=0.0,
+        object_types={"ARMATURE", "MESH"}, path_mode="COPY", embed_textures=True,
+    ),
+    "unreal": dict(
+        axis_forward="-Y", axis_up="Z", apply_scale_options="FBX_SCALE_NONE", global_scale=1.0,
+        add_leaf_bones=False, primary_bone_axis="Y", secondary_bone_axis="X",
+        bake_anim=True, bake_anim_use_all_actions=False, bake_anim_use_nla_strips=False,
+        bake_anim_force_startend_keying=True, bake_anim_simplify_factor=0.0,
+        object_types={"ARMATURE", "MESH"}, path_mode="COPY", embed_textures=True,
+    ),
+}
+
+
+def export_file(path, preset="default"):
     ext = os.path.splitext(path)[1].lower().lstrip(".")
     if ext == "glb":
         bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", export_skins=True, export_animations=True)
     elif ext == "gltf":
         bpy.ops.export_scene.gltf(filepath=path, export_format="GLTF_SEPARATE", export_skins=True, export_animations=True)
     elif ext == "fbx":
-        bpy.ops.export_scene.fbx(filepath=path, add_leaf_bones=False, bake_anim=True, path_mode="COPY", embed_textures=True)
+        bpy.ops.export_scene.fbx(filepath=path, **FBX_PRESETS.get(preset, FBX_PRESETS["default"]))
     elif ext == "obj":
         bpy.ops.wm.obj_export(filepath=path)
     elif ext == "stl":
@@ -70,16 +91,26 @@ def export_file(path):
 
 
 argv = sys.argv[sys.argv.index("--") + 1:]
-if len(argv) != 2:
-    die("usage: convert.py -- <input> <output>")
-src, dst = argv
+if len(argv) not in (2, 3):
+    die("usage: convert.py -- <input> <output> [default|unity|unreal]")
+src, dst = argv[:2]
+preset = argv[2] if len(argv) == 3 else "default"
 if not os.path.isfile(src):
     die(f"input not found: {src}")
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 import_file(src)
 _common.sanitize_materials()
-export_file(dst)
+# Export only the animation's own length: presets bake the scene range, which defaults to 1..250 and would pad the clip.
+actions = [a for a in bpy.data.actions if a.frame_range[1] > a.frame_range[0]]
+if actions:
+    lo = min(int(a.frame_range[0]) for a in actions)
+    hi = max(int(round(a.frame_range[1])) for a in actions)
+    bpy.context.scene.frame_start, bpy.context.scene.frame_end = lo, hi
+else:  # a static rig/mesh: do not add an empty baked take
+    for cfg in FBX_PRESETS.values():
+        cfg["bake_anim"] = False
+export_file(dst, preset)
 
 objs = list(bpy.context.scene.objects)
 print("CONVERT_OK", len(objs), "objects,", sum(1 for o in objs if o.type == "ARMATURE"), "armatures")

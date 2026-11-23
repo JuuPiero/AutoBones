@@ -369,14 +369,15 @@ export default function App() {
       const src = rigPath ?? sourcePath;
       if (!src) return;
       const stem = baseName(sourcePath ?? src).replace(/\.[^.]+$/, "");
-      const dest = await pickSavePath(`${stem}_rigged.${exportExt}`, exportExt);
+      const [ext, preset = "default"] = exportExt.split(":");
+      const dest = await pickSavePath(`${stem}_rigged${preset !== "default" ? "_" + preset : ""}.${ext}`, ext);
       if (!dest) return;
-      if (exportExt === "glb" && extOf(src) === "glb") {
+      if (ext === "glb" && extOf(src) === "glb") {
         await writeFileBytes(dest, await readFileBytes(src));
       } else {
-        await engine.convert(src, dest);
+        await engine.convert(src, dest, preset);
       }
-      const meshOnly = ["obj", "stl", "ply"].includes(exportExt);
+      const meshOnly = ["obj", "stl", "ply"].includes(ext);
       setNotice(`Đã xuất: ${dest}${meshOnly ? " (định dạng này không chứa xương)" : ""}`);
     });
 

@@ -62,6 +62,7 @@ def main(argv=None) -> int:
     c = sub.add_parser("convert")
     c.add_argument("input")
     c.add_argument("output")
+    c.add_argument("--preset", default="default", choices=["default", "unity", "unreal"], help="FBX settings for a game engine")
     sub.add_parser("check")
     a = ap.parse_args(argv)
 
@@ -81,7 +82,7 @@ def main(argv=None) -> int:
         elif a.cmd == "motion-bvh":
             res = motion.apply_bvh(Path(a.rigged), Path(a.skeleton), Path(a.bvh), Path(a.output), progress, a.in_place, a.loop)
         elif a.cmd == "convert":
-            res = pipeline.convert(Path(a.input), Path(a.output), progress)
+            res = pipeline.convert(Path(a.input), Path(a.output), progress, a.preset)
         else:
             from .blender import find_blender
 

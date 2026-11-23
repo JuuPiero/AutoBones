@@ -81,9 +81,9 @@ def rig(src: Path, dst: Path, kind: str, progress: Progress, replace_skeleton: b
     return {"output": str(dst), "skeleton": json.loads(sk.to_json()), "stats": stats}
 
 
-def convert(src: Path, dst: Path, progress: Progress) -> dict:
+def convert(src: Path, dst: Path, progress: Progress, preset: str = "default") -> dict:
     progress(0.1, f"Chuyển {src.suffix} → {dst.suffix}")
-    blender.run_script("convert.py", str(src), str(dst))
+    blender.run_script("convert.py", str(src), str(dst), preset)
     progress(1.0, "Xong")
     return {"output": str(dst)}
 

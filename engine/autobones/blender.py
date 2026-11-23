@@ -55,7 +55,7 @@ def run_script(script: str, *args: str, timeout: int = 900) -> str:
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, creationflags=flags)
     out = r.stdout + r.stderr
-    if r.returncode != 0 or "_ERROR:" in out:
+    if r.returncode != 0 or "_ERROR:" in out or "Traceback (most recent call last)" in out:
         lines = [l for l in out.splitlines() if "_ERROR" in l or "Error" in l or "Traceback" in l]
         raise RuntimeError("Blender lỗi: " + (" | ".join(lines[-5:]) or out[-800:]))
     return out
