@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { Viewer, isSecondaryBone, type ClipInfo, type ModelInfo, type StressReport, type ViewerMode } from "./viewer/Viewer";
+import { Viewer, isSecondaryBone, type Playback, type ClipInfo, type ModelInfo, type StressReport, type ViewerMode } from "./viewer/Viewer";
 import { isNativeFormat, NATIVE_EXTENSIONS } from "./viewer/loaders";
+import { HAND_POSES } from "./viewer/handposes";
 import {
   baseName,
   engine,
@@ -44,6 +45,8 @@ export default function App() {
   const [hovered, setHovered] = useState<string | null>(null);
   const [clips, setClips] = useState<ClipInfo[]>([]);
   const [playing, setPlaying] = useState(false);
+  const [pb, setPb] = useState<Playback | null>(null);
+  const [seamFlash, setSeamFlash] = useState(false);
 
   const [sourcePath, setSourcePath] = useState<string | null>(null); // what the user opened (input to rig)
   const [rigPath, setRigPath] = useState<string | null>(null); // current rigged GLB on disk
@@ -53,12 +56,15 @@ export default function App() {
   const [mirror, setMirror] = useState(true);
   const [showSkeleton, setShowSkeleton] = useState(true);
   const [showAllBones, setShowAllBones] = useState(false);
+  const [withFingers, setWithFingers] = useState(true);
   const [ikDepth, setIkDepth] = useState(3);
   const [stress, setStress] = useState<StressReport[] | null>(null);
   const [stressShown, setStressShown] = useState<string | null>(null);
 
   const [prompt, setPrompt] = useState("");
   const [seconds, setSeconds] = useState(4);
+  const [inPlace, setInPlace] = useState(true);
+  const [loopClip, setLoopClip] = useState(false);
   const [exportExt, setExportExt] = useState("glb");
 
   const [busy, setBusy] = useState<Busy | null>(null);
@@ -73,6 +79,7 @@ export default function App() {
   const missingStd = foreign && boneMap ? REQUIRED_STD.filter((r) => !boneMap[r]) : [];
   const canReplace = tauri && !!sourcePath && hasBones && (!skeleton || foreign);
   const rigged = hasBones && !!rigPath;
+  const canAnimate = rigged && !!skeleton && missingStd.length === 0;
 
   // ----- viewer lifecycle -----
   useEffect(() => {
@@ -97,6 +104,25 @@ export default function App() {
     void onProgress((frac, label) => setBusy((b) => (b ? { label, frac } : b))).then((u) => (off = u));
     return () => off?.();
   }, [tauri]);
+
+  // poll the viewer for playback state (timeline + loop counter) while a clip exists
+  useEffect(() => {
+    if (!playing) {
+      setPb(null);
+      return;
+    }
+    let lastLoops = 0;
+    const id = setInterval(() => {
+      const p = viewerRef.current?.getPlayback() ?? null;
+      setPb(p);
+      if (p && p.loops !== lastLoops) {
+        lastLoops = p.loops;
+        setSeamFlash(true);
+        setTimeout(() => setSeamFlash(false), 350);
+      }
+    }, 80);
+    return () => clearInterval(id);
+  }, [playing]);
 
   const resetSession = () => {
     setShowAllBones(false);
@@ -214,7 +240,7 @@ export default function App() {
     run("Đang phân tích model", async () => {
       if (!sourcePath) return;
       const out = await tempPath(`rigged_${Date.now()}.glb`);
-      const res = await engine.rig(sourcePath, out, "humanoid", replaceSkeleton);
+      const res = await engine.rig(sourcePath, out, "humanoid", replaceSkeleton, withFingers);
       await loadRigged(res.output);
       setSkeleton(res.skeleton);
       if (res.skeleton.warnings.length) setNotice(res.skeleton.warnings.join(" "));
@@ -310,7 +336,7 @@ export default function App() {
     run("Đang tạo animation", async () => {
       if (!rigPath || !skeleton) return;
       const out = await tempPath(`motion_${Date.now()}.glb`);
-      const res = await engine.motion(rigPath, await writeSkeleton(), prompt, seconds, out);
+      const res = await engine.motion(rigPath, await writeSkeleton(), prompt, seconds, out, inPlace || loopClip, loopClip);
       await playResult(res.output);
     });
 
@@ -320,7 +346,7 @@ export default function App() {
     await run("Đang áp chuyển động", async () => {
       if (!rigPath || !skeleton) return;
       const out = await tempPath(`motion_${Date.now()}.glb`);
-      const res = await engine.motionBvh(rigPath, await writeSkeleton(), bvh, out);
+      const res = await engine.motionBvh(rigPath, await writeSkeleton(), bvh, out, inPlace || loopClip, loopClip);
       await playResult(res.output);
     });
   };
@@ -479,6 +505,10 @@ export default function App() {
                         ? "Bạn có thể làm việc trực tiếp trên rig gốc (chỉnh khớp, kiểm tra tư thế, áp chuyển động). Chỉ khi muốn bộ xương người chuẩn gọn 22 xương mới cần thay (sẽ mất xương tóc/váy; file gốc không bị sửa)."
                         : "Muốn chỉnh khớp, kiểm tra tư thế chuẩn hoặc áp chuyển động? Hãy thay bằng bộ xương người chuẩn của AutoBones (mesh, texture và biểu cảm được giữ nguyên; file gốc không bị sửa)."}
                     </p>
+                    <label className="check">
+                      <input type="checkbox" checked={withFingers} onChange={(e) => setWithFingers(e.target.checked)} />
+                      Có ngón tay (52 xương, như Mixamo)
+                    </label>
                     <button disabled={!canReplace || !!busy} onClick={() => autoRig(true)}>
                       Thay bằng xương AutoBones
                     </button>
@@ -488,6 +518,10 @@ export default function App() {
             ) : (
               <>
                 <p className="meta">Hỗ trợ nhân vật dáng người đứng, tư thế chữ T hoặc chữ A.</p>
+                <label className="check">
+                  <input type="checkbox" checked={withFingers} onChange={(e) => setWithFingers(e.target.checked)} />
+                  Có ngón tay (52 xương, như Mixamo)
+                </label>
                 <button className="primary" disabled={!canRig || !!busy} onClick={() => autoRig(false)}>
                   Tự động gắn xương
                 </button>
@@ -515,6 +549,18 @@ export default function App() {
                   </button>
                   {selected && <button onClick={() => viewerRef.current?.clearSelection()}>Bỏ chọn</button>}
                 </div>
+                {info?.fingers && (
+                  <>
+                    <div className="sub">Bàn tay</div>
+                    <div className="row">
+                      {HAND_POSES.map((h) => (
+                        <button key={h.id} onClick={() => viewerRef.current?.setHandPose(h.id)}>
+                          {h.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
                 <label className="check" title="Số khớp cha di chuyển theo khi kéo một khớp">
                   Độ linh hoạt {ikDepth}
                   <input
@@ -601,7 +647,7 @@ export default function App() {
             )}
           </Step>
 
-          <Step n={4} title="Animation từ mô tả" disabled={!rigged || !skeleton || missingStd.length > 0}>
+          <Step n={4} title="Animation từ mô tả" disabled={!canAnimate && clips.length === 0}>
             <textarea
               rows={3}
               placeholder="Mô tả bằng tiếng Anh, ví dụ: a person walks forward and waves"
@@ -612,14 +658,58 @@ export default function App() {
               Thời lượng {seconds}s
               <input type="range" min={2} max={9} value={seconds} onChange={(e) => setSeconds(Number(e.target.value))} />
             </label>
-            <button className="primary" disabled={!prompt.trim() || !!busy} onClick={generateMotion}>
+            <label className="check" title="Đi bộ/chạy đứng tại chỗ, không dời vị trí nhân vật (dùng cho game engine)">
+              <input type="checkbox" checked={inPlace || loopClip} disabled={loopClip} onChange={(e) => setInPlace(e.target.checked)} />
+              Tại chỗ (in place)
+            </label>
+            <label className="check" title="Khung cuối nối liền khung đầu để lặp không giật (tự bật 'tại chỗ'). Hợp với đi bộ, chạy, thở...">
+              <input type="checkbox" checked={loopClip} onChange={(e) => setLoopClip(e.target.checked)} />
+              Vòng lặp mượt (loop)
+            </label>
+            <button className="primary" disabled={!prompt.trim() || !!busy || !canAnimate} onClick={generateMotion}>
               Tạo animation
             </button>
-            <button disabled={!!busy} onClick={importBvh} title="Dùng chuyển động có sẵn (Mixamo, mocap, model AI khác xuất BVH)">
+            <button disabled={!!busy || !canAnimate} onClick={importBvh} title="Dùng chuyển động có sẵn (Mixamo, mocap, model AI khác xuất BVH)">
               Nhập chuyển động từ file BVH…
             </button>
             {clips.length > 0 && (
-              <button onClick={togglePlay}>{playing ? "⏸ Dừng" : "▶ Phát"} ({clips[0].duration.toFixed(1)}s)</button>
+              <button onClick={togglePlay}>{playing ? "⏹ Dừng" : "▶ Phát"} ({clips[0].duration.toFixed(1)}s)</button>
+            )}
+            {pb && (
+              <div className={`preview ${seamFlash ? "flash" : ""}`}>
+                <div className="row between">
+                  <strong>Xem trước vòng lặp</strong>
+                  <span className="muted">Vòng {pb.loops + 1}</span>
+                </div>
+                <div className="timeline">
+                  <input
+                    type="range"
+                    min={0}
+                    max={pb.duration}
+                    step={0.01}
+                    value={pb.time}
+                    onChange={(e) => {
+                      viewerRef.current?.setClipPaused(true);
+                      viewerRef.current?.seekClip(Number(e.target.value));
+                    }}
+                  />
+                  <span className="seam" title="Điểm nối: cuối clip quay về đầu" />
+                </div>
+                <div className="row">
+                  <button onClick={() => viewerRef.current?.setClipPaused(!pb.paused)}>{pb.paused ? "▶" : "⏸"}</button>
+                  <button title="Nhảy tới 0.3s trước điểm nối rồi phát" onClick={() => {
+                    viewerRef.current?.seekClip(Math.max(0, pb.duration - 0.3));
+                    viewerRef.current?.setClipPaused(false);
+                  }}>
+                    Tới điểm nối
+                  </button>
+                  {[0.25, 0.5, 1, 2].map((x) => (
+                    <button key={x} className={pb.speed === x ? "on" : ""} onClick={() => viewerRef.current?.setClipSpeed(x)}>
+                      {x}×
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
           </Step>
 

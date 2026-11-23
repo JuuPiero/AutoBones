@@ -4,6 +4,7 @@ import { loadModelBuffer, loadModelFile, type LoadedModel } from "./loaders";
 import { solveCCD } from "./ik";
 import { applyWeightHeatmap, applyProblemColors, clearWeightHeatmap } from "./heatmap";
 import { TEST_POSES, mirrorBone } from "./poses";
+import { applyHandPose, hasFingers, type HandPoseId } from "./handposes";
 import {
   applyPoseSteps,
   captureRestFrames,
@@ -20,6 +21,8 @@ export interface ModelInfo {
   bones: number;
   /** bones hidden by default (hair, skirt, helper/twist bones) when the rig is dense */
   secondaryBones: number;
+  /** rig has Mixamo-style finger bones (hand presets available) */
+  fingers: boolean;
 }
 
 export interface StressReport {
@@ -38,6 +41,14 @@ export interface ClipInfo {
 
 export type ViewerMode = "pose" | "edit";
 
+export interface Playback {
+  time: number;
+  duration: number;
+  loops: number; // completed wraps since play started
+  paused: boolean;
+  speed: number;
+}
+
 export interface ViewerEvents {
   onSelectBone?: (name: string | null) => void;
   onHoverBone?: (name: string | null) => void;
@@ -48,7 +59,7 @@ export interface ViewerEvents {
 /** Hair, skirt, cloth, helper/twist and leaf bones: real but noisy to edit by hand. */
 const SECONDARY_BONE = new RegExp(
   "(hair|daimao|cloth|skirt|dress|cape|cloak|coat|scarf|sleeve|strap|ribbon|chain|cord|rope|tail|necklace|earring|pendant|" +
-    "accessor|weapon|jiggle|dyn|phy|breast|bust|chestbone|twist|finger|thumb|_end$|^z[a-z]|^leg_[lr]_[a-z]$|^eye|^[a-z]+_\\d+_\\d+$)",
+    "accessor|weapon|jiggle|dyn|phy|breast|bust|chestbone|twist|finger|thumb|hand(thumb|index|middle|ring|pinky)|_end$|^z[a-z]|^leg_[lr]_[a-z]$|^eye|^[a-z]+_\\d+_\\d+$)",
   "i",
 );
 export function isSecondaryBone(name: string): boolean {
@@ -117,7 +128,11 @@ export class Viewer {
   private clips: THREE.AnimationClip[] = [];
   private action: THREE.AnimationAction | null = null;
   private clock = new THREE.Clock();
+  private loopCount = 0;
+  private lastT = 0;
+  private speed = 1;
 
+  private lastHips: THREE.Vector3 | null = null; // camera follows the character while a clip plays
   private ikDepth = 3;
   private raf = 0;
   private resizeObs: ResizeObserver;
@@ -197,6 +212,12 @@ export class Viewer {
     const ndc = world.clone().project(this.camera);
     const r = this.renderer.domElement.getBoundingClientRect();
     return { x: r.left + ((ndc.x + 1) / 2) * r.width, y: r.top + ((1 - ndc.y) / 2) * r.height, world };
+  }
+
+  /** Hand presets (open / relaxed / fist / point) for rigs with finger bones. */
+  setHandPose(id: HandPoseId): void {
+    this.stopClip();
+    applyHandPose(this.boneByName, this.restFrames, id);
   }
 
   getBoneCount(): number {
@@ -323,14 +344,51 @@ export class Viewer {
     return this.clips.map((c) => ({ name: c.name, duration: c.duration }));
   }
 
-  playClip(index = 0): void {
+  playClip(index = 0, loop = true): void {
     if (!this.inner || !this.clips[index]) return;
     this.skinned.forEach(clearWeightHeatmap);
     this.mixer?.stopAllAction();
     this.mixer = new THREE.AnimationMixer(this.inner);
     this.action = this.mixer.clipAction(this.clips[index]);
+    this.action.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
+    this.action.clampWhenFinished = true;
     this.action.reset().play();
+    this.mixer.timeScale = this.speed;
+    this.loopCount = 0;
+    this.lastT = 0;
+    this.lastHips = null;
     this.clock.getDelta();
+  }
+
+  /** Playback controls for previewing a (looping) clip. */
+  setClipSpeed(x: number): void {
+    this.speed = x;
+    if (this.mixer) this.mixer.timeScale = x;
+  }
+
+  setClipPaused(p: boolean): void {
+    if (this.action) this.action.paused = p;
+  }
+
+  /** Jump to time t (seconds); lets you scrub right up to the loop seam. */
+  seekClip(t: number): void {
+    if (!this.action || !this.mixer) return;
+    const d = this.action.getClip().duration;
+    this.action.time = Math.min(Math.max(t, 0), d - 1e-3);
+    this.lastT = this.action.time;
+    this.mixer.update(0);
+    this.lastHips = null;
+  }
+
+  getPlayback(): Playback | null {
+    if (!this.action) return null;
+    return {
+      time: this.action.time,
+      duration: this.action.getClip().duration,
+      loops: this.loopCount,
+      paused: this.action.paused,
+      speed: this.speed,
+    };
   }
 
   stopClip(): void {
@@ -447,7 +505,10 @@ export class Viewer {
     });
 
     sanitizeMaterials(wrapper);
-    if (this.bones.length > 100) for (const b of this.bones) if (isSecondaryBone(b.name)) this.secondary.add(b);
+    const FINGER = /Hand(Thumb|Index|Middle|Ring|Pinky)\d/;
+    for (const b of this.bones) {
+      if (this.bones.length > 100 ? isSecondaryBone(b.name) : FINGER.test(b.name)) this.secondary.add(b);
+    }
 
     for (const b of this.bones) {
       this.restPose.set(b, { p: b.position.clone(), q: b.quaternion.clone(), s: b.scale.clone() });
@@ -467,6 +528,7 @@ export class Viewer {
       skinnedMeshes: this.skinned.length,
       bones: this.bones.length,
       secondaryBones: this.secondary.size,
+      fingers: hasFingers(this.boneByName),
     });
   }
 
@@ -549,6 +611,7 @@ export class Viewer {
       this.jointWorld(bone, v);
       const visible = this.showAllBones || !this.secondary.has(bone);
       this.joints[i].visible = visible;
+      this.joints[i].scale.setScalar(this.secondary.has(bone) ? 0.3 : 1); // fingers/helper bones are tiny
       this.joints[i].position.copy(v);
       const parent = bone.parent as THREE.Bone | null;
       if (visible && parent && parent.isBone) this.jointWorld(parent, p);
@@ -682,12 +745,37 @@ export class Viewer {
     this.camera.updateProjectionMatrix();
   }
 
+  /** Locomotion clips (walk, run) move the root; keep the character in view by moving the camera with it. */
+  private followWhilePlaying(): void {
+    const hips = this.action ? this.poseBones().get("Hips") : undefined;
+    if (!hips) {
+      this.lastHips = null;
+      return;
+    }
+    const p = hips.getWorldPosition(new THREE.Vector3());
+    if (this.lastHips) {
+      const dx = p.x - this.lastHips.x;
+      const dz = p.z - this.lastHips.z;
+      this.camera.position.x += dx;
+      this.camera.position.z += dz;
+      this.controls.target.x += dx;
+      this.controls.target.z += dz;
+    }
+    this.lastHips = p;
+  }
+
   private loop = (): void => {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.loop);
     this.controls.update();
-    if (this.mixer && this.action) this.mixer.update(this.clock.getDelta());
+    if (this.mixer && this.action) {
+      this.mixer.update(this.clock.getDelta());
+      const t = this.action.time;
+      if (t < this.lastT - this.action.getClip().duration * 0.5) this.loopCount++; // wrapped around the seam
+      this.lastT = t;
+    }
     this.modelRoot?.updateMatrixWorld(true);
+    this.followWhilePlaying();
     this.syncSkeletonOverlay();
     this.renderer.render(this.scene, this.camera);
   };

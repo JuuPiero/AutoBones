@@ -81,8 +81,12 @@ async function runEngine<T>(args: string[]): Promise<T> {
 }
 
 export const engine = {
-  rig: (input: string, output: string, kind = "humanoid", replaceSkeleton = false) =>
-    runEngine<RigResult>(["rig", input, output, "--kind", kind, ...(replaceSkeleton ? ["--replace-skeleton"] : [])]),
+  rig: (input: string, output: string, kind = "humanoid", replaceSkeleton = false, fingers = false) =>
+    runEngine<RigResult>([
+      "rig", input, output, "--kind", kind,
+      ...(replaceSkeleton ? ["--replace-skeleton"] : []),
+      ...(fingers ? ["--fingers"] : []),
+    ]),
   reskin: (input: string, skeletonJson: string, output: string) =>
     runEngine<RigResult>(["reskin", input, skeletonJson, output]),
   prepare: (input: string, output: string) =>
@@ -91,10 +95,14 @@ export const engine = {
     runEngine<{ output: string }>(["edit-rig", input, editsJson, output]),
   smooth: (input: string, output: string, iterations = 3) =>
     runEngine<{ output: string }>(["smooth", input, output, "--iterations", String(iterations)]),
-  motion: (rigged: string, skeletonJson: string, prompt: string, seconds: number, output: string) =>
-    runEngine<{ output: string }>(["motion", rigged, output, "--skeleton", skeletonJson, "--prompt", prompt, "--seconds", String(seconds)]),
-  motionBvh: (rigged: string, skeletonJson: string, bvh: string, output: string) =>
-    runEngine<{ output: string }>(["motion-bvh", rigged, bvh, output, "--skeleton", skeletonJson]),
+  motion: (rigged: string, skeletonJson: string, prompt: string, seconds: number, output: string, inPlace = false, loop = false) =>
+    runEngine<{ output: string }>([
+      "motion", rigged, output, "--skeleton", skeletonJson, "--prompt", prompt, "--seconds", String(seconds),
+      ...(inPlace ? ["--in-place"] : []),
+      ...(loop ? ["--loop"] : []),
+    ]),
+  motionBvh: (rigged: string, skeletonJson: string, bvh: string, output: string, inPlace = false, loop = false) =>
+    runEngine<{ output: string }>(["motion-bvh", rigged, bvh, output, "--skeleton", skeletonJson, ...(inPlace ? ["--in-place"] : []), ...(loop ? ["--loop"] : [])]),
   convert: (input: string, output: string) => runEngine<{ output: string }>(["convert", input, output]),
   check: () => runEngine<{ blender: string }>(["check"]),
 };
